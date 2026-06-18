@@ -1,0 +1,6 @@
+{
+  "publicPort": 4000,
+  "dashboardUrl": "http://192.168.1.13:3000",
+  "adminUser": "admin",
+  "adminPass": "progresivo123"
+}

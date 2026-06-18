@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Admin Progresivo Race</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0a0a0f; color: #eee; margin: 0; padding: 20px; }
+  h1 { color: #ffd700; margin-top: 0; }
+  h2 { color: #00e5d4; border-bottom: 1px solid #333; padding-bottom: 6px; }
+  .card { background: #151520; padding: 16px; border-radius: 8px; margin-bottom: 18px; }
+  .row { display: flex; gap: 12px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+  button { background: #00e5d4; color: #000; border: 0; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  button:hover { background: #00ffe5; }
+  button.off { background: #ff4466; color: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #222; text-align: left; }
+  th { color: #ffd700; background: #1a1a2a; }
+  tr:hover td { background: #1a1a2a; }
+  select, input { background: #1a1a2a; color: #eee; border: 1px solid #333; padding: 6px 8px; border-radius: 4px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.on { background: #00e5d4; color: #000; }
+  .badge.off { background: #ff4466; color: #fff; }
+  pre { background: #000; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Admin Progresivo Race</h1>
+
+<!-- ============================================================
+     Control de sprite-config
+     ============================================================ -->
+<div class="card">
+  <h2>Configuracion de Sprite (auto/moto)</h2>
+  <p>Si esta <b>activado</b>, en la hoja se muestra el auto o la moto. Si esta <b>desactivado</b>, se muestra el odometro con el monto.</p>
+  <div class="row">
+    <span>GRAND:</span>
+    <span id="grand-status" class="badge">—</span>
+    <button onclick="setSprite('grand', true)">Mostrar auto</button>
+    <button class="off" onclick="setSprite('grand', false)">Ocultar (mostrar monto)</button>
+  </div>
+  <div class="row">
+    <span>MAJOR:</span>
+    <span id="major-status" class="badge">—</span>
+    <button onclick="setSprite('major', true)">Mostrar moto</button>
+    <button class="off" onclick="setSprite('major', false)">Ocultar (mostrar monto)</button>
+  </div>
+  <div class="row">
+    <button onclick="loadSprite()">Refrescar estado</button>
+    <span id="sprite-msg" style="color:#888;"></span>
+  </div>
+</div>
+
+<!-- ============================================================
+     Historial de updates/ganadores
+     ============================================================ -->
+<div class="card">
+  <h2>Historial de updates (tabla peticiones)</h2>
+  <div class="row">
+    <label>Limite: <input type="number" id="hist-limit" value="50" min="1" max="500" style="width:80px;"></label>
+    <button onclick="loadHistory()">Cargar</button>
+    <span id="hist-msg" style="color:#888;"></span>
+  </div>
+  <table id="hist-table">
+    <thead>
+      <tr>
+        <th>ID</th><th>Fecha</th><th>Endpoint</th><th>Sheet</th><th>Monto</th>
+        <th>Ganador</th><th>Maquina</th><th>Posicion</th><th>Procesado</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- ============================================================
+     Auditoria de eventos
+     ============================================================ -->
+<div class="card">
+  <h2>Auditoria de eventos (tabla eventos)</h2>
+  <div class="row">
+    <label>Filtrar:
+      <select id="audit-tipo">
+        <option value="">(todos)</option>
+        <option value="sprite-config">sprite-config</option>
+        <option value="sprite-config-bulk">sprite-config-bulk</option>
+        <option value="memoria">memoria</option>
+        <option value="reload_auto">reload_auto</option>
+      </select>
+    </label>
+    <label>Limite: <input type="number" id="audit-limit" value="50" min="1" max="500" style="width:80px;"></label>
+    <button onclick="loadAudit()">Cargar</button>
+    <span id="audit-msg" style="color:#888;"></span>
+  </div>
+  <table id="audit-table">
+    <thead>
+      <tr>
+        <th>ID</th><th>Fecha</th><th>Tipo</th><th>Descripcion</th><th>Memoria MB</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+async function api(method, ruta, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(ruta, opts);
+  return await r.json();
+}
+
+// ---- Sprite config -----------------------------------------
+async function loadSprite() {
+  document.getElementById('sprite-msg').textContent = 'Cargando...';
+  try {
+    const cfg = await api('GET', '/api/sprite');
+    paintBadge('grand-status', cfg.grand);
+    paintBadge('major-status', cfg.major);
+    document.getElementById('sprite-msg').textContent = '';
+  } catch (e) { document.getElementById('sprite-msg').textContent = 'Error: ' + e.message; }
+}
+function paintBadge(id, valor) {
+  const el = document.getElementById(id);
+  el.textContent = valor ? 'Mostrando' : 'Oculto';
+  el.className = 'badge ' + (valor ? 'on' : 'off');
+}
+async function setSprite(sheet, show) {
+  // Lee el otro flag para enviar ambos en el bulk
+  const cfg = await api('GET', '/api/sprite');
+  const body = { grand: cfg.grand, major: cfg.major };
+  body[sheet] = show;
+  try {
+    const r = await api('POST', '/api/sprite', body);
+    document.getElementById('sprite-msg').textContent = 'OK: ' + JSON.stringify(r);
+    loadSprite();
+  } catch (e) { document.getElementById('sprite-msg').textContent = 'Error: ' + e.message; }
+}
+
+// ---- History -----------------------------------------
+async function loadHistory() {
+  document.getElementById('hist-msg').textContent = 'Cargando...';
+  const limit = document.getElementById('hist-limit').value;
+  try {
+    const r = await api('GET', '/api/history?limit=' + limit);
+    const tbody = document.querySelector('#hist-table tbody');
+    tbody.innerHTML = '';
+    (r.peticiones || []).forEach(p => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + p.id + '</td>' +
+                     '<td>' + (p.fecha_registro || '').substring(0,19).replace('T',' ') + '</td>' +
+                     '<td>' + (p.endpoint || '') + '</td>' +
+                     '<td>' + (p.sheet || '') + '</td>' +
+                     '<td>' + (p.amount !== null ? p.amount : '-') + '</td>' +
+                     '<td>' + (p.ganador ? 'SI' : 'no') + '</td>' +
+                     '<td>' + (p.maquina || '-') + '</td>' +
+                     '<td>' + (p.posicion !== null ? p.posicion : '-') + '</td>' +
+                     '<td>' + (p.procesado ? 'SI' : 'no') + '</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('hist-msg').textContent = r.count + ' registros';
+  } catch (e) { document.getElementById('hist-msg').textContent = 'Error: ' + e.message; }
+}
+
+// ---- Audit -----------------------------------------
+async function loadAudit() {
+  document.getElementById('audit-msg').textContent = 'Cargando...';
+  const limit = document.getElementById('audit-limit').value;
+  const tipo = document.getElementById('audit-tipo').value;
+  try {
+    let url = '/api/audit?limit=' + limit;
+    if (tipo) url += '&tipo=' + tipo;
+    const r = await api('GET', url);
+    const tbody = document.querySelector('#audit-table tbody');
+    tbody.innerHTML = '';
+    (r.eventos || []).forEach(e => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + e.id + '</td>' +
+                     '<td>' + (e.fecha_registro || '').substring(0,19).replace('T',' ') + '</td>' +
+                     '<td>' + e.tipo + '</td>' +
+                     '<td>' + (e.descripcion || '') + '</td>' +
+                     '<td>' + (e.memoria_mb !== null ? e.memoria_mb : '-') + '</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('audit-msg').textContent = r.count + ' registros';
+  } catch (e) { document.getElementById('audit-msg').textContent = 'Error: ' + e.message; }
+}
+
+// Cargar al inicio
+loadSprite();
+loadHistory();
+loadAudit();
+</script>
+
+</body>
+</html>
