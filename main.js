@@ -21,7 +21,7 @@ function loadConfig() {
     : path.join(__dirname, 'config.json');
   const defaults = {
     publicPort: 4000,
-    dashboardUrl: 'http://localhost:3000',
+    dashboardPort: 3000,
     adminUser: 'admin',
     adminPass: 'progresivo123'
   };
@@ -42,6 +42,18 @@ function startServer(config) {
   const httpApp = express();
   httpApp.use(express.json());
 
+  // Logger general: imprime CUALQUIER peticion que llega al admin
+  httpApp.use((req, res, next) => {
+    const n = new Date();
+    const ts = String(n.getHours()).padStart(2,'0') + ':' +
+               String(n.getMinutes()).padStart(2,'0') + ':' +
+               String(n.getSeconds()).padStart(2,'0');
+    console.log('[ADMIN] ' + ts +
+                ' << ' + req.method + ' ' + req.url +
+                ' (from ' + (req.ip || req.connection.remoteAddress) + ')');
+    next();
+  });
+
   // Auth basica DESACTIVADA
   // Si la quieres activar, descomenta este bloque:
   /*
@@ -59,8 +71,11 @@ function startServer(config) {
     res.sendFile(path.join(__dirname, 'index.html'));
   });
 
-  async function callDashboard(method, ruta, body) {
-    const url = config.dashboardUrl + ruta;
+  // baseUrl es la URL completa del dashboard (ej "http://192.168.1.32:3000")
+  // Para llamadas del panel web local se usa "http://localhost:PORT".
+  // Para llamadas del MVC se usa "http://<body.ip>:PORT".
+  async function callDashboard(baseUrl, method, ruta, body) {
+    const url = baseUrl + ruta;
     console.log('[ADMIN] -> ' + method + ' ' + url);
     try {
       const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -76,9 +91,33 @@ function startServer(config) {
     }
   }
 
-  httpApp.get('/api/sprite', async (req, res) => {
-    try { const r = await callDashboard('GET', '/sprite-config'); res.status(r.status).json(r.data); }
-    catch (e) { res.status(500).json({ error: e.message }); }
+  // URL del dashboard local (mismo PC) - usada por el panel admin
+  function localDashboardUrl() {
+    return 'http://localhost:' + config.dashboardPort;
+  }
+
+  // Construye la URL del dashboard a partir de una IP/host.
+  // - "192.168.1.32"      -> http://192.168.1.32:<config.dashboardPort>
+  // - "192.168.1.32:5000" -> http://192.168.1.32:5000
+  // - vacio/null          -> http://localhost:<config.dashboardPort>
+  function buildDashboardUrl(ip) {
+    if (ip && typeof ip === 'string' && ip.length > 0) {
+      const clean = ip.replace(/^https?:\/\//i, '').trim();
+      if (clean.includes(':')) return 'http://' + clean;
+      return 'http://' + clean + ':' + config.dashboardPort;
+    }
+    return localDashboardUrl();
+  }
+
+  // POST /api/sprite-estado
+  // Body opcional: { "ip": "192.168.1.32" }  (sin body o sin ip -> localhost)
+  httpApp.post('/api/sprite-estado', async (req, res) => {
+    const ip = req.body && req.body.ip;
+    const baseUrl = buildDashboardUrl(ip);
+    try {
+      const r = await callDashboard(baseUrl, 'GET', '/sprite-config');
+      res.status(r.status).json(r.data);
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
   // Helper: coerce cualquier representacion de booleano a true/false.
   // Acepta: true/false, "true"/"false", "True"/"False", 1/0, "1"/"0"
@@ -109,7 +148,7 @@ function startServer(config) {
     const body = req.body || {};
     console.log('[ADMIN] /api/sprite body recibido:', JSON.stringify(body));
 
-    let grand, major, modo;
+    let grand, major, modo, dashboardBaseUrl;
 
     // Detectar formato MVC: tiene objetos Car y Moto
     if (body.Car && body.Moto) {
@@ -122,29 +161,39 @@ function startServer(config) {
                    JSON.stringify(body.Car.ShowAmount) + ', Moto.ShowAmount=' + JSON.stringify(body.Moto.ShowAmount) + ')'
         });
       }
+      // La IP del dashboard viene en el body (campo "ip"). Si no viene, usar localhost.
+      if (!body.ip || typeof body.ip !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: 'Campo "ip" requerido en el body (IP donde corre la animacion).'
+        });
+      }
       // ShowAmount=true -> mostrar monto -> ocultar sprite -> show=false
       grand = !carShow;
       major = !motoShow;
       modo = 'MVC (invertido)';
+      dashboardBaseUrl = 'http://' + body.ip + ':' + config.dashboardPort;
     }
-    // Formato simple
+    // Formato simple (panel web local o externo)
     else {
       const g = toBool(body.grand);
       const m = toBool(body.major);
       if (g === null || m === null) {
         return res.status(400).json({
           success: false,
-          message: 'Body invalido. Esperado {grand, major} o {Car:{ShowAmount}, Moto:{ShowAmount}}'
+          message: 'Body invalido. Esperado {grand, major} o {Car:{ShowAmount}, Moto:{ShowAmount}, ip}'
         });
       }
       grand = g;
       major = m;
       modo = 'simple';
+      // ip opcional: si viene se usa, sino localhost
+      dashboardBaseUrl = buildDashboardUrl(body.ip);
     }
 
-    console.log('[ADMIN] /api/sprite (' + modo + ') -> dashboard {grand:' + grand + ', major:' + major + '}');
+    console.log('[ADMIN] /api/sprite (' + modo + ') -> ' + dashboardBaseUrl + ' {grand:' + grand + ', major:' + major + '}');
     try {
-      const r = await callDashboard('POST', '/sprite-config-bulk', { grand, major });
+      const r = await callDashboard(dashboardBaseUrl, 'POST', '/sprite-config-bulk', { grand, major });
       if (r.status >= 200 && r.status < 300) {
         return res.json({
           success: true,
@@ -162,27 +211,47 @@ function startServer(config) {
       });
     }
   });
-  httpApp.get('/api/history', async (req, res) => {
+  // POST /api/history
+  // Body opcional: { "ip": "192.168.1.32", "limit": 50 }
+  httpApp.post('/api/history', async (req, res) => {
     try {
-      const limit = parseInt(req.query.limit) || 50;
-      const r = await callDashboard('GET', '/history?limit=' + limit);
-      res.status(r.status).json(r.data);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-  httpApp.get('/api/audit', async (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit) || 50;
-      const tipo = req.query.tipo || '';
-      let url = '/audit?limit=' + limit;
-      if (tipo) url += '&tipo=' + encodeURIComponent(tipo);
-      const r = await callDashboard('GET', url);
+      const b = req.body || {};
+      const limit = parseInt(b.limit) || 50;
+      const baseUrl = buildDashboardUrl(b.ip);
+      const r = await callDashboard(baseUrl, 'GET', '/history?limit=' + limit);
       res.status(r.status).json(r.data);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  httpServer = httpApp.listen(config.publicPort, () => {
-    console.log('[ADMIN] Escuchando en puerto ' + config.publicPort);
-    console.log('[ADMIN] Dashboard: ' + config.dashboardUrl);
+  // POST /api/audit
+  // Body opcional: { "ip": "192.168.1.32", "limit": 50, "tipo": "sprite-config-bulk" }
+  httpApp.post('/api/audit', async (req, res) => {
+    try {
+      const b = req.body || {};
+      const limit = parseInt(b.limit) || 50;
+      const tipo = b.tipo || '';
+      const baseUrl = buildDashboardUrl(b.ip);
+      let url = '/audit?limit=' + limit;
+      if (tipo) url += '&tipo=' + encodeURIComponent(tipo);
+      const r = await callDashboard(baseUrl, 'GET', url);
+      res.status(r.status).json(r.data);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  // POST /api/ultimo-monto
+  // Body opcional: { "ip": "192.168.1.32" }  o  { "ip": "192.168.1.32:3000" }
+  // Sin body o body.ip vacio -> usa localhost.
+  httpApp.post('/api/ultimo-monto', async (req, res) => {
+    const ip = req.body && req.body.ip;
+    const baseUrl = buildDashboardUrl(ip);
+    try {
+      const r = await callDashboard(baseUrl, 'GET', '/ultimo-monto');
+      res.status(r.status).json(r.data);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  httpServer = httpApp.listen(config.publicPort, '0.0.0.0', () => {
+    console.log('[ADMIN] Escuchando en 0.0.0.0:' + config.publicPort + ' (todas las interfaces)');
+    console.log('[ADMIN] Dashboard port: ' + config.dashboardPort + ' (la IP llega en cada request MVC)');
   });
 }
 

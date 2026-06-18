@@ -17,22 +17,27 @@
   th { color: #ffd700; background: #1a1a2a; }
   tr:hover td { background: #1a1a2a; }
   select, input { background: #1a1a2a; color: #eee; border: 1px solid #333; padding: 6px 8px; border-radius: 4px; }
+  input[type="text"] { width: 200px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
   .badge.on { background: #00e5d4; color: #000; }
   .badge.off { background: #ff4466; color: #fff; }
-  pre { background: #000; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+  .hint { color: #888; font-size: 12px; margin-left: 8px; }
+  .monto { font-size: 24px; color: #ffd700; font-weight: 700; font-family: 'Courier New', monospace; }
 </style>
 </head>
 <body>
 
 <h1>Admin Progresivo Race</h1>
 
-<!-- ============================================================
-     Control de sprite-config
-     ============================================================ -->
+<!-- Sprite config -->
 <div class="card">
   <h2>Configuracion de Sprite (auto/moto)</h2>
-  <p>Si esta <b>activado</b>, en la hoja se muestra el auto o la moto. Si esta <b>desactivado</b>, se muestra el odometro con el monto.</p>
+  <div class="row">
+    <label>IP:Puerto del dashboard
+      <input type="text" id="sprite-ip" placeholder="(vacio = localhost)">
+    </label>
+    <button onclick="loadSprite()">Refrescar estado</button>
+  </div>
   <div class="row">
     <span>GRAND:</span>
     <span id="grand-status" class="badge">—</span>
@@ -46,20 +51,54 @@
     <button class="off" onclick="setSprite('major', false)">Ocultar (mostrar monto)</button>
   </div>
   <div class="row">
-    <button onclick="loadSprite()">Refrescar estado</button>
-    <span id="sprite-msg" style="color:#888;"></span>
+    <span id="sprite-msg" class="hint"></span>
   </div>
 </div>
 
-<!-- ============================================================
-     Historial de updates/ganadores
-     ============================================================ -->
+<!-- Ultimo monto -->
+<div class="card">
+  <h2>Ultimo monto registrado (los 4 pozos)</h2>
+  <div class="row">
+    <label>IP:Puerto del dashboard
+      <input type="text" id="monto-ip" placeholder="(vacio = localhost)">
+    </label>
+    <button onclick="loadUltimoMonto()">Consultar</button>
+    <span id="monto-msg" class="hint"></span>
+  </div>
+  <div class="row" style="gap: 40px; flex-wrap: wrap;">
+    <div>
+      <div class="hint">CAR (grand)</div>
+      <div class="monto" id="monto-car">—</div>
+      <div class="hint" id="fecha-car"></div>
+    </div>
+    <div>
+      <div class="hint">MOTO (major)</div>
+      <div class="monto" id="monto-moto">—</div>
+      <div class="hint" id="fecha-moto"></div>
+    </div>
+    <div>
+      <div class="hint">MINOR</div>
+      <div class="monto" id="monto-minor">—</div>
+      <div class="hint" id="fecha-minor"></div>
+    </div>
+    <div>
+      <div class="hint">MINI</div>
+      <div class="monto" id="monto-mini">—</div>
+      <div class="hint" id="fecha-mini"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Historial -->
 <div class="card">
   <h2>Historial de updates (tabla peticiones)</h2>
   <div class="row">
+    <label>IP:Puerto del dashboard
+      <input type="text" id="hist-ip" placeholder="(vacio = localhost)">
+    </label>
     <label>Limite: <input type="number" id="hist-limit" value="50" min="1" max="500" style="width:80px;"></label>
     <button onclick="loadHistory()">Cargar</button>
-    <span id="hist-msg" style="color:#888;"></span>
+    <span id="hist-msg" class="hint"></span>
   </div>
   <table id="hist-table">
     <thead>
@@ -72,12 +111,13 @@
   </table>
 </div>
 
-<!-- ============================================================
-     Auditoria de eventos
-     ============================================================ -->
+<!-- Auditoria -->
 <div class="card">
   <h2>Auditoria de eventos (tabla eventos)</h2>
   <div class="row">
+    <label>IP:Puerto del dashboard
+      <input type="text" id="audit-ip" placeholder="(vacio = localhost)">
+    </label>
     <label>Filtrar:
       <select id="audit-tipo">
         <option value="">(todos)</option>
@@ -89,7 +129,7 @@
     </label>
     <label>Limite: <input type="number" id="audit-limit" value="50" min="1" max="500" style="width:80px;"></label>
     <button onclick="loadAudit()">Cargar</button>
-    <span id="audit-msg" style="color:#888;"></span>
+    <span id="audit-msg" class="hint"></span>
   </div>
   <table id="audit-table">
     <thead>
@@ -109,26 +149,34 @@ async function api(method, ruta, body) {
   return await r.json();
 }
 
-// ---- Sprite config -----------------------------------------
-async function loadSprite() {
-  document.getElementById('sprite-msg').textContent = 'Cargando...';
-  try {
-    const cfg = await api('GET', '/api/sprite');
-    paintBadge('grand-status', cfg.grand);
-    paintBadge('major-status', cfg.major);
-    document.getElementById('sprite-msg').textContent = '';
-  } catch (e) { document.getElementById('sprite-msg').textContent = 'Error: ' + e.message; }
+function getIp(inputId) {
+  const v = document.getElementById(inputId).value.trim();
+  return v || undefined;
 }
+
 function paintBadge(id, valor) {
   const el = document.getElementById(id);
   el.textContent = valor ? 'Mostrando' : 'Oculto';
   el.className = 'badge ' + (valor ? 'on' : 'off');
 }
+
+async function loadSprite() {
+  document.getElementById('sprite-msg').textContent = 'Cargando...';
+  const ip = getIp('sprite-ip');
+  try {
+    const cfg = await api('POST', '/api/sprite-estado', ip ? { ip } : {});
+    paintBadge('grand-status', cfg.grand);
+    paintBadge('major-status', cfg.major);
+    document.getElementById('sprite-msg').textContent = '';
+  } catch (e) { document.getElementById('sprite-msg').textContent = 'Error: ' + e.message; }
+}
+
 async function setSprite(sheet, show) {
-  // Lee el otro flag para enviar ambos en el bulk
-  const cfg = await api('GET', '/api/sprite');
+  const ip = getIp('sprite-ip');
+  const cfg = await api('POST', '/api/sprite-estado', ip ? { ip } : {});
   const body = { grand: cfg.grand, major: cfg.major };
   body[sheet] = show;
+  if (ip) body.ip = ip;
   try {
     const r = await api('POST', '/api/sprite', body);
     document.getElementById('sprite-msg').textContent = 'OK: ' + JSON.stringify(r);
@@ -136,12 +184,32 @@ async function setSprite(sheet, show) {
   } catch (e) { document.getElementById('sprite-msg').textContent = 'Error: ' + e.message; }
 }
 
-// ---- History -----------------------------------------
+async function loadUltimoMonto() {
+  document.getElementById('monto-msg').textContent = 'Cargando...';
+  const ip = getIp('monto-ip');
+  try {
+    const r = await api('POST', '/api/ultimo-monto', ip ? { ip } : {});
+    const pintar = (key, id, fechaId) => {
+      const v = r[key] || {};
+      document.getElementById(id).textContent = 'S/. ' + (v.Monto || 0).toLocaleString('en-US', {minimumFractionDigits: 2});
+      document.getElementById(fechaId).textContent = v.Fecha ? v.Fecha.substring(0,19).replace('T',' ') : '-';
+    };
+    pintar('Car',   'monto-car',   'fecha-car');
+    pintar('Moto',  'monto-moto',  'fecha-moto');
+    pintar('Minor', 'monto-minor', 'fecha-minor');
+    pintar('Mini',  'monto-mini',  'fecha-mini');
+    document.getElementById('monto-msg').textContent = '';
+  } catch (e) { document.getElementById('monto-msg').textContent = 'Error: ' + e.message; }
+}
+
 async function loadHistory() {
   document.getElementById('hist-msg').textContent = 'Cargando...';
-  const limit = document.getElementById('hist-limit').value;
+  const limit = parseInt(document.getElementById('hist-limit').value) || 50;
+  const ip = getIp('hist-ip');
   try {
-    const r = await api('GET', '/api/history?limit=' + limit);
+    const body = { limit };
+    if (ip) body.ip = ip;
+    const r = await api('POST', '/api/history', body);
     const tbody = document.querySelector('#hist-table tbody');
     tbody.innerHTML = '';
     (r.peticiones || []).forEach(p => {
@@ -161,15 +229,16 @@ async function loadHistory() {
   } catch (e) { document.getElementById('hist-msg').textContent = 'Error: ' + e.message; }
 }
 
-// ---- Audit -----------------------------------------
 async function loadAudit() {
   document.getElementById('audit-msg').textContent = 'Cargando...';
-  const limit = document.getElementById('audit-limit').value;
+  const limit = parseInt(document.getElementById('audit-limit').value) || 50;
   const tipo = document.getElementById('audit-tipo').value;
+  const ip = getIp('audit-ip');
   try {
-    let url = '/api/audit?limit=' + limit;
-    if (tipo) url += '&tipo=' + tipo;
-    const r = await api('GET', url);
+    const body = { limit };
+    if (tipo) body.tipo = tipo;
+    if (ip) body.ip = ip;
+    const r = await api('POST', '/api/audit', body);
     const tbody = document.querySelector('#audit-table tbody');
     tbody.innerHTML = '';
     (r.eventos || []).forEach(e => {
@@ -185,10 +254,7 @@ async function loadAudit() {
   } catch (e) { document.getElementById('audit-msg').textContent = 'Error: ' + e.message; }
 }
 
-// Cargar al inicio
 loadSprite();
-loadHistory();
-loadAudit();
 </script>
 
 </body>
