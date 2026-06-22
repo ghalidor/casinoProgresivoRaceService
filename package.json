@@ -33,9 +33,13 @@
     "files": [
       "main.js",
       "index.html",
+      "icon.png",
       "node_modules/**/*",
       "!dist/**/*",
       "!logs/**/*"
+    ],
+    "asarUnpack": [
+      "icon.png"
     ],
     "extraResources": [
       {
@@ -45,7 +49,8 @@
     ],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "publisherName": "Casino Progresivo"
+      "publisherName": "Casino Progresivo",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -53,7 +58,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Admin Progresivo"
+      "shortcutName": "Admin Progresivo",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
